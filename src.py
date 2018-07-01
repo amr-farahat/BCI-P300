@@ -1,32 +1,41 @@
 from __future__ import division
 import numpy as np
-from keras.models import Sequential, Model
-from keras.layers import Dense, Input
-from keras.layers import Conv2D, MaxPooling2D 
-from keras.layers import Dropout, Flatten, Reshape
-from keras.layers.merge import concatenate
-from keras.layers.normalization import BatchNormalization
-from keras.layers.core import Lambda
-from keras.optimizers import Adam, SGD
-from keras.callbacks import Callback, TensorBoard, LearningRateScheduler, EarlyStopping
-from keras import regularizers
-import keras.backend as K
+import tensorflow as tf
+import random as rn
+np.random.seed(42)
+rn.seed(12345)
+tf.set_random_seed(1234)
+from models import *
+import matplotlib.pyplot as plt
+from imblearn.under_sampling import RandomUnderSampler
 from imblearn.over_sampling import RandomOverSampler
-#from sklearn.model_selection import train_test_split, LeavePGroupsOut, GroupKFold
-from sklearn.preprocessing import StandardScaler
-#from sklearn.utils.class_weight import compute_class_weight
-#from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.model_selection import train_test_split, LeavePGroupsOut, GroupKFold, StratifiedKFold
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import StratifiedKFold, train_test_split, StratifiedShuffleSplit
+from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix, accuracy_score
+import itertools
 from utils import plot_confusion_matrix
 import pdb
 import os
+from os import listdir
+from os.path import isfile, join
 import time
 import math
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn import svm
+from sklearn.externals import joblib
+from keras.models import load_model
 
 
-def load_data(subject):
-    data_path = 'data/50/subjects/'
-    x = np.load(open(data_path+subject+'/segments.npy'))
+def load_data(subject, mode='eeg', channels=[], frequency=50):
+    data_path = 'data/'+str(frequency)+'/subjects/'
+    if mode=='eeg':
+        x = np.load(open(data_path+subject+'/segments.npy'))
+    elif mode=='meg':
+        x = np.load(open(data_path+subject+'/meg_segments.npy'))
+    else:
+        print 'Wrong mode. you can only choose eeg or meg'
     y = np.load(open(data_path+subject+'/labels.npy'))
     t = np.load(open(data_path+subject+'/target.npy'))
     tr = np.load(open(data_path+subject+'/triggers.npy'))
@@ -36,89 +45,26 @@ def load_data(subject):
         temp_t.extend(np.ones((60,))*i)
     t = np.array(temp_t).astype(int)
 
+    if len(channels):
+        x = x[:,channels,:]
+
+#    indexes = np.random.permutation(len(tr))
+#    tr = tr[indexes]
     return x, y, t, tr
-def preprocessing(x):
+def preprocessing(x, frequency='50_avg'):
     x = np.swapaxes(x,1,2)
     ## baseline correction
+    if frequency == '50_avg':
+        bl = 5
+    elif frequency=='250':
+        bl = 25
+#    bl = int(frequency/10)
     corrected = np.empty_like(x)
     for i in range(x.shape[0]):
-        baselines = np.mean(x[i,0:5,:], axis=0)
+        baselines = np.mean(x[i,0:bl,:], axis=0)
         corrected[i] = x[i] - baselines
     x = corrected
     return x
-
-def branched(data_shape):
-    timepoints = data_shape[1]
-    channels = data_shape[2]
-
-    input_data = Input(shape=(timepoints, channels, 1))
-
-    spatial_conv = Conv2D(6, (1,channels), activation='relu', padding='valid')(input_data)
-    spatial_conv = BatchNormalization()(spatial_conv)
-    #spatial_conv = Dropout(0.33)(spatial_conv)
-    spatial_conv = Lambda(lambda x: K.dropout(x, level=0.33))(spatial_conv)
-
-
-
-    branch1 = Conv2D(4, (21,1), activation='relu', padding='valid')(spatial_conv)
-    branch1 = BatchNormalization()(branch1)
-    branch1 = MaxPooling2D((3,1))(branch1)
-    #branch1 = Dropout(0.33)(branch1)
-    branch1 = Lambda(lambda x: K.dropout(x, level=0.33))(branch1)
-    branch1 = Flatten()(branch1)
-
-    branch2 = Conv2D(4, (5,1), activation='relu', padding='valid')(spatial_conv)
-    branch2 = BatchNormalization()(branch2)
-    branch2 = MaxPooling2D((3,1))(branch2)
-    #branch2 = Dropout(0.33)(branch2)
-    branch2 = Lambda(lambda x: K.dropout(x, level=0.33))(branch2)
-
-    branch2 = Conv2D(4, (5,1), activation='relu', padding='valid')(branch2)
-    branch2 = BatchNormalization()(branch2)
-    branch2 = MaxPooling2D((2,1))(branch2)
-    #branch2 = Dropout(0.33)(branch2)
-    branch2 = Lambda(lambda x: K.dropout(x, level=0.33))(branch2)
-
-
-    branch2 = Flatten()(branch2)
-
-
-    merged = concatenate([branch1, branch2])
-
-
-    dense = Dense(1, activation='sigmoid')(merged)
-
-    model = Model(inputs = [input_data], outputs=[dense])
-
-
-    return model
-
-def create_eegnet(data_shape):
-
-    timepoints = data_shape[1]
-    channels = data_shape[2]
-
-    model = Sequential()
-
-    model.add(Conv2D(16, (1,30), activation='relu',
-                     kernel_regularizer=regularizers.l1_l2(0.0001), input_shape=(timepoints, channels, 1)))
-    model.add(BatchNormalization())
-    model.add(Dropout(0.25))
-    model.add(Reshape((41,16,1)))
-
-    model.add(Conv2D(4, (16,2), strides=(1,1), activation='relu', padding='same'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D((4,2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(4, (2,8), strides=(1,1), activation='relu', padding='same'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D((4,2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Dense(1, activation='sigmoid'))
-    return model
 
 def precision(y_true, y_pred):
     return precision_score(y_true, y_pred)
@@ -134,35 +80,53 @@ def balanced_accuracy(y_true, y_pred):
     recall_n = float(tn) / (tn + fp)
     return (recall_p + recall_n) /2.0
 
+#def recognition_accuracy(probs):
+#    trials = int(len(probs)/60)
+#    n_correct = 0
+#    matrix = []
+#    for i in range(trials):
+#        classes = np.zeros((12,))
+#        for k in range(i*60,i*60+60):
+#
+#            classes[tr_test[k]-1] += probs[k]
+#        choosen = np.argmax(classes)+1
+#        if choosen == t_test[i*60]:
+#            n_correct+=1
+#        confidence = classes/float(np.sum(classes))
+#        row = np.array([confidence, t_test[i*60]])
+#        matrix.append(row)
+#    return np.array([n_correct/float(trials), np.array(matrix)])
 def recognition_accuracy(probs):
+#    pdb.set_trace()
     trials = int(len(probs)/60)
-    n_correct = 0
+    n_correct = np.zeros((5,))
     matrix = []
     for i in range(trials):
-        classes = np.zeros((12,))
+        classes = [[] for s in range(12)]
         for k in range(i*60,i*60+60):
 
-            classes[tr_test[k]-1] += probs[k]
-        choosen = np.argmax(classes)+1
-        if choosen == t_test[i*60]:
-            n_correct+=1
-        confidence = classes/float(np.sum(classes))
-        row = np.array([confidence, t_test[i*60]])
-        matrix.append(row)
+            classes[tr_test[k]-1].append(probs[k])
+        classes = np.array(classes)
+#        pdb.set_trace()
+        if classes.ndim > 1:
+            classes = np.cumsum(classes, axis=1)
+            choosen = np.argmax(classes, axis=0)+1
+            choices = []
+            for j in range(5):
+                if choosen[j] == t_test[i*60]:
+                    n_correct[j]+=1
+                choices.append((t_test[i*60], choosen[j]))
+    #            confidence = classes/float(np.sum(classes))
+    #            row = np.array([confidence, t_test[i*60]])
+    #            matrix.append(row)
+            matrix.append(choices)
     return np.array([n_correct/float(trials), np.array(matrix)])
 
+def bitperminute(p, n, t):
+    p[p==1] = 1-np.finfo(float).eps
+    B = np.log2(n)+p*np.log2(p)+(1-p)*np.log2((1-p)/(n-1).astype(float))
+    return B*(float(60)/t)
 
-def predict_with_uncertainty(f, x, n_iter=10):
-    result = []
-
-    for iter in range(n_iter):
-
-        result.append(f([x, 1])[0])
-    #pdb.set_trace()
-    prediction = np.mean(result,axis=0)
-    #uncertainty = result.var(axis=0)
-    return prediction
-            
 class Metrics(Callback):
     def on_train_begin(self, logs={}):
         self.val_precisions = []
@@ -171,27 +135,38 @@ class Metrics(Callback):
         self.val_aucs = []
         self.val_balanced_acc = []
         self.val_recognition_acc = []
-    def on_epoch_end(self, epoch, logs={}):      
-        result = []
-        for iter in range(20):
-            result.append(self.model.predict(self.validation_data[0]))
-        probs = np.mean(result,axis=0)
+        self.val_bpm = []
+        self.test_acc = []
+        self.test_loss = []
+    def on_epoch_end(self, epoch, logs={}):
+#        probs = self.model.predict(self.validation_data[0])
+#        y_pred = np.round(probs)
+#        y_true = self.validation_data[1]
+        probs = self.model.predict(x_test)
+        probs = probs.ravel()
         y_pred = np.round(probs)
-        y_true = self.validation_data[1]
+        y_true = y_test
+        self.test_acc.append(accuracy_score(y_true, y_pred))
+        self.test_loss.append(self.model.evaluate(x_test, y_test, batch_size = 64, verbose=0)[0])
         self.val_precisions.append(precision(y_true, y_pred))
         self.val_recalls.append(recall(y_true, y_pred))
         self.val_f1s.append(f1(y_true, y_pred))
-        self.val_aucs.append(auc(y_true, y_pred))
+        self.val_aucs.append(auc(y_true, probs))
         self.val_balanced_acc.append(balanced_accuracy(y_true, y_pred))
         self.val_recognition_acc.append(recognition_accuracy(probs))
+        self.val_bpm.append(bitperminute(self.val_recognition_acc[-1][0], np.ones((5,))*12,np.arange(2,12,2)))
         return
 
 
 def step_decay(epoch):
     initial_lrate = 0.001
     drop = 0.5
-    epochs_drop = 40.0
+    epochs_drop = 10.0
     lrate = initial_lrate * math.pow(drop, math.floor((1+epoch)/epochs_drop))
+#    if epoch:
+#        lrate = initial_lrate/np.sqrt(epoch)
+#    else:
+#        return initial_lrate
     return lrate
 
 def cv_splitter(x, n_splits=5):
@@ -227,91 +202,238 @@ def cv_splitter(x, n_splits=5):
 
     return folds
 
-def cross_validator(data, n_splits=5, epochs=10):
+def compute_metrics(metrics, probs, y_predict, y_test):
+    metrics['val_acc'].append(accuracy_score(y_test, y_predict))
+    metrics['val_precisions'].append(precision(y_test, y_predict))
+    metrics['val_recalls'].append(recall(y_test, y_predict))
+    metrics['val_f1s'].append(f1(y_test, y_predict))
+    metrics['val_aucs'].append(auc(y_test, probs))
+    metrics['val_balanced_acc'].append(balanced_accuracy(y_test, y_predict))
+    metrics['val_recognition_acc'].append(recognition_accuracy(probs)[0])
+    metrics['val_bpm'].append(bitperminute(metrics['val_recognition_acc'][-1], np.ones((5,))*12,np.arange(2,12,2)))
 
-    metrics = []
-    histories = []
+    return metrics
+
+def cross_validator(data,subject, n_splits=5, epochs=10, lr=0.0003, batch_size=64, model_name="",
+                    model_config={'bn':True, 'dropout':True, 'branched':True, 'nonlinear':'tanh'},
+                    early_stopping=True,
+                    use_deep_features=False,
+                    patience=10):
+
+    if model_name.startswith('deep'):
+
+        metrics = []
+        histories = []
+    else:
+        m = ['acc', 'val_acc', 'val_precisions', 'val_recalls', 'val_f1s', 'val_aucs',
+                 'val_balanced_acc', 'val_recognition_acc', 'val_bpm']
+        metrics = {key: [] for key in m }
+        histories = False
+
     cnf_matrices = []
     x = data[0]
     y = data[1]
     t = data[2]
     tr = data[3]
 
+    if use_deep_features:
+        path = './models/subjects/'
+        load_model_name = 'deep_subjective_branched_250_thesis1'
+        files = [f for f in listdir(join(path, subject)) if isfile(join(path, subject, f))]
+        myfiles = [file for file in files if load_model_name in file ]
+        myfiles.sort()
+#    skf = StratifiedKFold(n_splits=5)
+#    for train, test in skf.split(x, y):
 
-    for train, test in cv_splitter(x, n_splits=n_splits):
+#    sss = StratifiedShuffleSplit(n_splits=1, test_size=.1, random_state=0)
+#    for train, test in sss.split(x, y):
 
-        x_train, x_test, y_train, y_test = x[train], x[test], y[train], y[test]
+    for i, (train, test) in enumerate(cv_splitter(x, n_splits=n_splits)):
+
+        if use_deep_features:
+            base_model = load_model(join(path, subject, myfiles[i]))
+            model = Model(inputs=base_model.input, outputs=base_model.layers[-2].output)
+
+
+#        print train
+#        print test
+#        continue
+        global y_test
+        x_tv, x_test, y_tv, y_test = x[train], x[test], y[train], y[test]
 
         global t_test
         t_test = t[test]
         global tr_test
         tr_test = tr[test]
 
+        if model_name.startswith('deep') and early_stopping:
+            x_train, x_valid, y_train, y_valid = train_test_split(x_tv, y_tv,
+                                                                  stratify=y_tv,
+                                                                  random_state=42,
+                                                                  test_size=0.2)
+        else:
+            x_train = x_tv
+            y_train = y_tv
+            if use_deep_features:
+                x_train, y_train, x_test, y_test = resample_transform((x_train, y_train, x_test, y_test), resample=False)
+                x_train = model.predict(x_train)
+                x_test = model.predict(x_test)
         # standarization of the data
         # computing the mean and std on the training data
-        scalar = StandardScaler(with_mean=False)
-        stds = []
-        trials_no = x_train.shape[0]
-        for i in range(trials_no):
-            scalar.fit(x_train[i])
-            std = scalar.scale_
-            stds.append(std)
-        # tranbsforming the training data
-        scalar.scale_ = np.mean(stds, axis=0)
-        normalized_x_train = np.empty_like(x_train)
-        for i in range(trials_no):
-            temp = scalar.transform(x_train[i])
-            normalized_x_train[i] = temp
+#        scalar = StandardScaler(with_mean=False)
+##         mus = []
+#        stds = []
+#        trials_no = x_train.shape[0]
+#        for i in range(trials_no):
+#            scalar.fit(x_train[i])
+##             mu = scalar.mean_
+#            std = scalar.scale_
+##             mus.append(mu)
+#            stds.append(std)
+#        #scalar.fit(x_train.reshape((x_train.shape[0]*x_train.shape[1], x_train.shape[2])))
+#
+#        # tranbsforming the training data
+##         scalar.mean_ = np.mean(mus, axis=0)
+#        scalar.scale_ = np.mean(stds, axis=0)
+#        normalized_x_train = np.empty_like(x_train)
+#        for i in range(trials_no):
+#            temp = scalar.transform(x_train[i])
+#            normalized_x_train[i] = temp
+#
+#        # transforming the test data
+#        normalized_x_test = np.empty_like(x_test)
+#        trials_no = x_test.shape[0]
+#        for i in range(trials_no):
+#            temp = scalar.transform(x_test[i])
+#            normalized_x_test[i] = temp
 
-        # transforming the test data
-        normalized_x_test = np.empty_like(x_test)
-        trials_no = x_test.shape[0]
-        for i in range(trials_no):
-            temp = scalar.transform(x_test[i])
-            normalized_x_test[i] = temp
+#        normalized_x_train = x_train
+#        normalized_x_test = x_test
 
+        #standarization
+        scalar = StandardScaler(with_mean=True)
+        scalar.fit(x_train.reshape(x_train.shape[0],-1))
+        x_train = scalar.transform(x_train.reshape(x_train.shape[0], -1)).reshape(x_train.shape)
+        x_test = scalar.transform(x_test.reshape(x_test.shape[0], -1)).reshape(x_test.shape)
+        if model_name.startswith('deep') and early_stopping:
+            x_valid = scalar.transform(x_valid.reshape(x_valid.shape[0], -1)).reshape(x_valid.shape)
+
+#        x_train_reshaped = x_train.reshape(x_train.shape[0],-1)
+#        x_test_reshaped = x_test.reshape(x_test.shape[0], -1)
+#        mins = np.min(x_train_reshaped , axis=0)
+#        maxs = np.max(x_train_reshaped, axis=0)
+#        normalized_x_train = 2*(x_train_reshaped-mins)/(maxs-mins)-1
+#        normalized_x_test = 2*(x_test_reshaped-mins)/(maxs-mins)-1
+#        normalized_x_train = np.reshape(normalized_x_train, x_train.shape)
+#        normalized_x_test = np.reshape(normalized_x_test, x_test.shape)
+##
 
                 #resampling the data
-        n_samples, timepoints, channels = x_train.shape
-        normalized_x_train = np.reshape(normalized_x_train, (n_samples, timepoints * channels))
-        ros = RandomOverSampler(random_state=0)
-        x_res, y_res = ros.fit_sample(normalized_x_train, y_train)
-        normalized_x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
-        y_train = y_res
-
-        normalized_x_train = np.expand_dims(normalized_x_train, axis=3)
-        normalized_x_test = np.expand_dims(normalized_x_test, axis=3)
 
 
+        if model_name.startswith('deep'):
+            n_samples, timepoints, channels = x_train.shape
+            x_train = np.reshape(x_train, (n_samples, timepoints * channels))
+            ros = RandomOverSampler(random_state=0)
+            x_res, y_res = ros.fit_sample(x_train, y_train)
+            x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
+            y_train = y_res
+
+        x_train = np.expand_dims(x_train, axis=3)
+        global x_test
+        x_test = np.expand_dims(x_test, axis=3)
+        if model_name.startswith('deep') and early_stopping:
+            x_valid = np.expand_dims(x_valid, axis=3)
+
+#        c = compute_class_weight('balanced', [0, 1], y)
+#        class_weight = {0:c[0],1:c[1]}
+#        print class_weight
+#         pdb.set_trace()
         #compiling the model
+        if model_name.startswith('deep'):
+            if 'branched' in model_name:
+                if '250' in model_name:
+                    path = './models/subjects/'
+                    load_model_name = 'deep_intersubjective_branched_250_thesis2_2'
+                    files = [f for f in listdir(join(path, subject)) if isfile(join(path, subject, f))]
+                    myfiles = [file for file in files if load_model_name in file ]
+                    model = load_model(join(path, subject, myfiles[0]))
+                    
+#                    model = branched2(x.shape, model_config=model_config, f=5)
+                else:
+                    path = './models/subjects/'
+                    load_model_name = 'deep_intersubjective_branched_50_avg_thesis2_2'
+                    files = [f for f in listdir(join(path, subject)) if isfile(join(path, subject, f))]
+                    myfiles = [file for file in files if load_model_name in file ]
+                    model = load_model(join(path, subject, myfiles[0]))
+                    
+#                    model = branched2(x.shape, model_config=model_config, f=1)
+            elif 'eegnet' in model_name:
+                if '250' in model_name:
+                    model = create_eegnet(x.shape, f=4)
+                else:
+                    model = create_eegnet(x.shape, f=1)
+            elif 'cnn' in model_name:
+                if '250' in model_name:
+                    model = create_cnn(x.shape, f=5)
+                else:
+                    model = create_cnn(x.shape, f=1)
 
-        model = create_eegnet(x.shape)
+#            opt = Adam(lr=lr)
+            opt = SGD(lr=1e-4, momentum=0.9)
+            lrate = LearningRateScheduler(step_decay)
 
-#         tb = TensorBoard(log_dir='./Graph', histogram_freq=10, write_graph=False, write_images=True)
+            model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
-#         adam = Adam(lr=0.001)
-#         lrate = LearningRateScheduler(step_decay)
-        model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+            m = Metrics()
+            reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                              patience=int(patience/2), min_lr=0)
+            early_stop = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=patience, verbose=0, mode='auto')
+            mod_path = './models/subjects/'+subject
+            timestr = time.strftime("%Y%m%d-%H%M")
 
-        m = Metrics()
+            checkpointer = ModelCheckpoint(filepath=mod_path+'/best_'+model_name+'_'+timestr,
+                                           monitor='val_loss', verbose=1, save_best_only=True)
+            if early_stopping:
+                history = model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, shuffle=True, verbose=2 ,
+                               validation_data=(x_valid, y_valid), callbacks=[m, early_stop, checkpointer, reduce_lr],
+                               )
+            else:
+                history = model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, shuffle=True, verbose=2 ,
+                               validation_data=(x_test, y_test), callbacks=[m],
+                               )
 
-        early_stop = EarlyStopping(monitor='val_loss', min_delta=0.001, patience=10, verbose=0, mode='auto')
+            metrics.append(m)
+            histories.append(history)
 
-        history = model.fit(normalized_x_train, y_train, batch_size=64, epochs=epochs, shuffle=True, verbose=0,
-                           validation_data=(normalized_x_test, y_test), callbacks=[m, early_stop],
-                           )
-
-        metrics.append(m)
-        histories.append(history)
-
-        probabilities = model.predict(normalized_x_test, batch_size=64, verbose=0)
-        y_predict = [(round(k)) for k in probabilities]
+            probabilities = model.predict(x_test, batch_size=batch_size, verbose=0)
+            y_predict = [(round(k)) for k in probabilities]
+        else:
+            x_train = np.reshape(x_train, (x_train.shape[0], -1))
+            x_test = np.reshape(x_test, (x_test.shape[0],-1))
+            if 'svm' in model_name:
+                clf = svm.LinearSVC(random_state=4)
+            elif 'lda' in model_name:
+                if 'shrinkage' in model_name:
+                    clf = LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto')
+                else:
+                    clf = LinearDiscriminantAnalysis(solver='lsqr', shrinkage=None)
+            clf.fit(x_train, y_train)
+            y_predict = clf.predict(x_test)
+            if 'svm' in model_name:
+                probs = clf.decision_function(x_test)
+            elif 'lda' in model_name:
+                probs = clf.decision_function(x_test)
+            metrics['acc'].append(clf.score(x_train, y_train))
+            metrics = compute_metrics(metrics, probs, y_predict, y_test)
 
         cnf_matrix = confusion_matrix(y_test, y_predict)
         cnf_matrices.append(cnf_matrix)
     return metrics, histories, cnf_matrices
 
-def save_resutls(metrics, histories, subject, suffix=''):
+
+
+def save_resutls(metrics, histories, subject, suffix='', clf=None, early_stopping=True, patience=10):
     res_path = './results/subjects/'+subject
     if not os.path.exists(res_path):
         os.makedirs(res_path)
@@ -321,56 +443,81 @@ def save_resutls(metrics, histories, subject, suffix=''):
         os.makedirs(mod_path)
 
     timestr = time.strftime("%Y%m%d-%H%M")
+    if histories:
+        results = []
+        for i in range(len(histories)):
+            if not early_stopping:
+                histories[i].model.save(mod_path+'/model'+str(i+1)+'_'+suffix+'_'+timestr+'.h5')
+            dic = histories[i].history
+            dic['val_precisions'] = metrics[i].val_precisions
+            dic['test_loss'] = metrics[i].test_loss
+            dic['test_acc'] = metrics[i].test_acc
+            dic['val_recalls'] = metrics[i].val_recalls
+            dic['val_f1s'] = metrics[i].val_f1s
+            dic['val_aucs'] = metrics[i].val_aucs
+            dic['val_balanced_acc'] = metrics[i].val_balanced_acc
+            dic['val_recognition_acc'] = [p[0] for p in metrics[i].val_recognition_acc]
+            dic['choices'] = [p[1] for p in metrics[i].val_recognition_acc]
+            dic['val_bpm'] = metrics[i].val_bpm
+#            dic['val_trials_classification'] = [p[1] for p in metrics[i].val_recognition_acc]
+            results.append(dic)
 
-    results = []
-    for i in range(len(histories)):
-        histories[i].model.save(mod_path+'/model'+str(i+1)+'_'+suffix+'_'+timestr+'.h5')
-        dic = histories[i].history
-        dic['val_precisions'] = metrics[i].val_precisions
-        dic['val_recalls'] = metrics[i].val_recalls
-        dic['val_f1s'] = metrics[i].val_f1s
-        dic['val_aucs'] = metrics[i].val_aucs
-        dic['val_balanced_acc'] = metrics[i].val_balanced_acc
-        dic['val_recognition_acc'] = [p[0] for p in metrics[i].val_recognition_acc]
-        dic['val_trials_classification'] = [p[1] for p in metrics[i].val_recognition_acc]
-        results.append(dic)
-
-    final_results = {key:[] for key in results[0].keys()}
-    #print final_results
-    for model in results:
-        keys = model.keys()
-        for key in keys:
-            final_results[key].append(model[key][-1])
-
+        final_results = {key:[] for key in results[0].keys()}
+        #print final_results
+#        pdb.set_trace()
+        for model in results:
+#            best_i = np.argmax(model['val_acc'])
+            keys = model.keys()
+            for key in keys:
+                if early_stopping:
+                    final_results[key].append(model[key][-(patience+1)])
+                else:
+                    final_results[key].append(model[key][-1])
+    else:
+        final_results = metrics
     super_final_results = {key:None for key in final_results.keys() if key != 'val_trials_classification'}
     for key in final_results.keys():
-        if key != 'val_trials_classification':
-            mean = np.mean(final_results[key])
-            std = np.std(final_results[key])
+        if key != 'choices':
+#            pdb.set_trace()
+            mean = np.mean(final_results[key], axis=0)
+            std = np.std(final_results[key], axis=0)
             super_final_results[key] = {'mean':mean, 'std':std}
     super_final_results = np.array([super_final_results])
 
-    np.savez(open(res_path+'/all_results_'+suffix+'_'+timestr+'.npz','w'), results=results,
+    if histories:
+        np.savez(open(res_path+'/all_results_'+suffix+'_'+timestr+'.npz','w'), results=results,
              final_results=final_results, super_final_results=super_final_results)
+    else:
+        np.savez(open(res_path+'/all_results_'+suffix+'_'+timestr+'.npz','w'), super_final_results=super_final_results)
+        joblib.dump(clf, mod_path+'/model'+'_'+suffix+'_'+timestr+'.pkl')
     return super_final_results
 
 
-def collect_data_intersubjective(subjects, test_subject, channels=[]):
+
+
+def collect_data_intersubjective(subjects, test_subject, mode='eeg', channels=[], all_sub=False, frequency=50):
 
     x_train = []
     y_train = []
     for subject in subjects:
         if subject == test_subject:
-            pass
-        else:
-            x, y, t, tr = load_data(subject)
-            x = preprocessing(x)
-            x_train.extend(x)
-            y_train.extend(y)
-            del x,y,t,tr
+            if not all_sub:
+                continue
 
-    x,y,t,tr = load_data(test_subject)
-    x = preprocessing(x)
+        x, y, t, tr = load_data(subject, mode=mode, channels=channels, frequency=frequency)
+        x = preprocessing(x, frequency=frequency)
+#        pdb.set_trace()
+        x_train.extend(x)
+        y_train.extend(y)
+        del x,y,t,tr
+
+    if all_sub:
+        x_train = np.array(x_train)
+        y_train = np.array(y_train)
+        return x_train, y_train
+
+    x,y,t,tr = load_data(test_subject, mode=mode, channels=channels, frequency=frequency)
+    x = preprocessing(x, frequency=frequency)
     x_test = x
     y_test = y
     t_test = t
@@ -385,54 +532,72 @@ def collect_data_intersubjective(subjects, test_subject, channels=[]):
     t_test = np.array(t_test)
     tr_test = np.array(tr_test)
 
-    if len(channels):
-        x_train = x_train[:,:,channels]
-        x_test = x_test[:,:,channels]
+#    if len(channels):
+#        x_train = x_train[:,:,channels]
+#        x_test = x_test[:,:,channels]
     return x_train, y_train, x_test, y_test, t_test, tr_test
 
 
-def resample_transform(data):
+def resample_transform(data, resample=True):
 
-    x_train, y_train, x_test, y_test = data
+    if len(data) > 4:
+        x_train, y_train, x_test, y_test, x_valid, y_valid = data
+    else:
+        x_train, y_train, x_test, y_test = data
 
 
     # standarization of the data
     # computing the mean and std on the training data
-    scalar = StandardScaler(with_mean=False)
-    stds = []
-    trials_no = x_train.shape[0]
-    for i in range(trials_no):
-        scalar.fit(x_train[i])
-        std = scalar.scale_
-        stds.append(std)
+#    scalar = StandardScaler(with_mean=False)
+#    stds = []
+#    trials_no = x_train.shape[0]
+#    for i in range(trials_no):
+#        scalar.fit(x_train[i])
+#        std = scalar.scale_
+#        stds.append(std)
+#
+#    scalar.scale_ = np.mean(stds, axis=0)
+#    normalized_x_train = np.empty_like(x_train)
+#    for i in range(trials_no):
+#        temp = scalar.transform(x_train[i])
+#        normalized_x_train[i] = temp
+#
+#    # transforming the test data
+#    normalized_x_test = np.empty_like(x_test)
+#    trials_no = x_test.shape[0]
+#    for i in range(trials_no):
+#        temp = scalar.transform(x_test[i])
+#        normalized_x_test[i] = temp
+#
+#    x_train = normalized_x_train
+#    x_test = normalized_x_test
 
-    scalar.scale_ = np.mean(stds, axis=0)
-    normalized_x_train = np.empty_like(x_train)
-    for i in range(trials_no):
-        temp = scalar.transform(x_train[i])
-        normalized_x_train[i] = temp
 
-    # transforming the test data
-    normalized_x_test = np.empty_like(x_test)
-    trials_no = x_test.shape[0]
-    for i in range(trials_no):
-        temp = scalar.transform(x_test[i])
-        normalized_x_test[i] = temp
-
+    scalar = StandardScaler(with_mean=True)
+    scalar.fit(x_train.reshape(x_train.shape[0],-1))
+    normalized_x_train = scalar.transform(x_train.reshape(x_train.shape[0], -1)).reshape(x_train.shape)
+    normalized_x_test = scalar.transform(x_test.reshape(x_test.shape[0], -1)).reshape(x_test.shape)
+    if len(data)>4:
+        normalized_x_valid = scalar.transform(x_valid.reshape(x_valid.shape[0], -1)).reshape(x_valid.shape)
     x_train = normalized_x_train
     x_test = normalized_x_test
+    if len(data) > 4:
+        x_valid = normalized_x_valid
 
+    if resample:
         #resampling the data
-    n_samples, timepoints, channels = x_train.shape
-    x_train = np.reshape(x_train, (n_samples, timepoints * channels))
-    ros = RandomOverSampler(random_state=0)
-    x_res, y_res = ros.fit_sample(x_train, y_train)
-    x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
-    y_train = y_res
+        n_samples, timepoints, channels = x_train.shape
+        x_train = np.reshape(x_train, (n_samples, timepoints * channels))
+        ros = RandomOverSampler(random_state=0)
+        x_res, y_res = ros.fit_sample(x_train, y_train)
+        x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
+        y_train = y_res
 
     x_train = np.expand_dims(x_train, axis=3)
     x_test = np.expand_dims(x_test, axis=3)
-
+    if len(data) > 4:
+        x_valid = np.expand_dims(x_valid, axis=3)
+        return x_train, y_train, x_test, y_test, x_valid, y_valid
     return x_train, y_train, x_test, y_test
 
 def transform(data):
@@ -467,34 +632,106 @@ def transform(data):
     x_test = normalized_x_test
 
     return x_train, y_train, x_test, y_test
-
-def intersubjective_training(data, epochs=5):
+def intersubjective_shallow(data, model_name):
 
     x_train, y_train, x_test, y_test, o_t_test, o_tr_test = data
+
+    x_train, y_train, x_test, y_test = resample_transform((x_train, y_train, x_test, y_test), resample=False)
+
+    global t_test
+    t_test = o_t_test
+    global tr_test
+    tr_test = o_tr_test
+    x_train = x_train.reshape(x_train.shape[0], -1)
+    x_test = x_test.reshape(x_test.shape[0], -1)
+    m = ['acc', 'val_acc', 'val_precisions', 'val_recalls', 'val_f1s', 'val_aucs',
+             'val_balanced_acc', 'val_recognition_acc', 'val_bpm']
+    metrics = {key: [] for key in m }
+    history = False
+    if 'svm' in model_name:
+        clf = svm.LinearSVC(random_state = 0)
+    elif 'lda' in model_name:
+        if 'shrinkage' in model_name:
+            clf = LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto')
+        else:
+            clf = LinearDiscriminantAnalysis(solver='lsqr', shrinkage=None)
+    clf.fit(x_train, y_train)
+    y_predict = clf.predict(x_test)
+    probs = clf.decision_function(x_test)
+    metrics['acc'].append(clf.score(x_train, y_train))
+    metrics = compute_metrics(metrics, probs, y_predict, y_test)
+    cnf_matrix = confusion_matrix(y_test, y_predict)
+
+    return metrics, history, cnf_matrix, clf
+
+def intersubjective_training(data,model_name, subject, epochs=5, lr=0.001,
+                             batch_size=128,
+                             model_config={'bn':True, 'dropout':True, 'branched':True, 'nonlinear':'tanh'},
+                             early_stopping=True, patience=10):
+
+    global y_test
+    x_tv, y_tv, x_test, y_test, o_t_test, o_tr_test = data
+
+    if early_stopping:
+#        pdb.set_trace()
+        x_train, x_valid, y_train, y_valid = train_test_split(x_tv, y_tv,
+                                                                  stratify=y_tv,
+                                                                  test_size=0.2)
+        global x_test
+        x_train, y_train, x_test, y_test, x_valid, y_valid = resample_transform((x_train, y_train, x_test, y_test, x_valid, y_valid))
+    else:
+        x_train = x_tv
+        y_train = y_tv
+        global x_test
+        x_train, y_train, x_test, y_test = resample_transform((x_train, y_train, x_test, y_test))
 
     global t_test
     t_test = o_t_test
     global tr_test
     tr_test = o_tr_test
 
-    model = branched(x_train.shape)
+    if 'branched' in model_name:
+        if '250' in model_name:
+            model = branched2(x_train.shape, model_config=model_config, f=5)
+        else:
+            model = branched2(x_train.shape, model_config=model_config, f=1)
+    elif 'eegnet' in model_name:
+        if '250' in model_name:
+            model = create_eegnet(x_train.shape, f=4)
+        else:
+            model = create_eegnet(x_train.shape,  f=1)
+    elif 'cnn' in model_name:
+        if '250' in model_name:
+            model = create_cnn(x_train.shape,  f=5)
+        else:
+            model = create_cnn(x_train.shape,  f=1)
 
-
-    adam = Adam(lr=0.001)
+    lrate = LearningRateScheduler(step_decay)
+    adam = Adam(lr=lr)
     # lrate = LearningRateScheduler(step_decay)
     model.compile(loss='binary_crossentropy', optimizer=adam, metrics=['accuracy'])
 
     m = Metrics()
-
-    early_stop = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=5, verbose=0, mode='auto')
-
-
-    history = model.fit(x_train, y_train, batch_size=128, epochs=epochs, shuffle=True, verbose=0,
-                       validation_data=(x_test, y_test), callbacks=[m, early_stop])
-
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                              patience=int(patience/2), min_lr=0)
+    early_stop = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=patience, verbose=0, mode='auto')
+    mod_path = './models/subjects/'+subject
+    timestr = time.strftime("%Y%m%d-%H%M")
 
 
-    probabilities = model.predict(x_test, batch_size=128, verbose=0)
+    checkpointer = ModelCheckpoint(filepath=mod_path+'/best_'+model_name+'_'+timestr,
+                                           monitor='val_loss', verbose=1, save_best_only=True)
+    if early_stopping:
+        history = model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, shuffle=True, verbose=2,
+                       validation_data=(x_valid, y_valid), callbacks=[m, early_stop, checkpointer, reduce_lr])
+    else:
+        history = model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, shuffle=True, verbose=2,
+                       validation_data=(x_test, y_test), callbacks=[m])
+
+
+
+
+    probabilities = model.predict(x_test, batch_size=batch_size, verbose=0)
     y_predict = [(round(k)) for k in probabilities]
 
     cnf_matrix = confusion_matrix(y_test, y_predict)
@@ -503,7 +740,7 @@ def intersubjective_training(data, epochs=5):
 
 
 
-def finetune(model, data, epochs=10, train_trials=40, mode='all'):
+def finetune(model, data, model_name, subject, epochs=10, train_trials=40, mode='all', early_stopping=True, patience=10):
 
     for layer in model.layers[:26]:
         if mode=='all':
@@ -513,6 +750,7 @@ def finetune(model, data, epochs=10, train_trials=40, mode='all'):
         else:
             print 'wrong keyword argument'
             return
+#     print model.summary()
 
     opt = SGD(lr=1e-4, momentum=0.9)
 
@@ -522,31 +760,64 @@ def finetune(model, data, epochs=10, train_trials=40, mode='all'):
 
     segments = train_trials * 60
 
-    x_train = x_test[0:segments]
-    y_train = y_test[0:segments]
-    x_test = x_test[segments:]
-    y_test = y_test[segments:]
+    x_tv = x_test[0:segments]
+    y_tv = y_test[0:segments]
+
+    if early_stopping:
+        x_train, x_valid, y_train, y_valid = train_test_split(x_tv, y_tv,
+                                                              stratify=y_tv,
+                                                              test_size=0.2)
+        x_test = x_test[segments:]
+        global y_test
+        y_test = y_test[segments:]
+        global x_test
+        x_train, y_train, x_test, y_test, x_valid, y_valid = resample_transform((x_train, y_train, x_test, y_test, x_valid, y_valid))
+    else:
+        x_train = x_tv
+        y_train = y_tv
+        x_test = x_test[segments:]
+        global y_test
+        y_test = y_test[segments:]
+        global x_test
+        x_train, y_train, x_test, y_test = resample_transform((x_train, y_train, x_test, y_test))
+
+#    x_test = x_test[segments:]
+#    y_test = y_test[segments:]
+
+
+
     global t_test
     t_test = o_t_test[segments:]
     global tr_test
     tr_test = o_tr_test[segments:]
-    #resampling the data
-    n_samples, timepoints, channels, z = x_train.shape
-    x_train = np.reshape(x_train, (n_samples, timepoints * channels))
-    ros = RandomOverSampler(random_state=0)
-    x_res, y_res = ros.fit_sample(x_train, y_train)
-    x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
-    y_train = y_res
+#    #resampling the data
+#    n_samples, timepoints, channels, z = x_train.shape
+#    x_train = np.reshape(x_train, (n_samples, timepoints * channels))
+#    ros = RandomOverSampler(random_state=0)
+#    x_res, y_res = ros.fit_sample(x_train, y_train)
+#    x_train = np.reshape(x_res, (x_res.shape[0], timepoints, channels))
+#    y_train = y_res
+#
+#    x_train = np.expand_dims(x_train, axis=3)
+#     x_test = np.expand_dims(x_test, axis=3)
 
-    x_train = np.expand_dims(x_train, axis=3)
-
-    early_stop = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=10, verbose=0, mode='auto')
+    early_stop = EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=patience, verbose=0, mode='auto')
 
 
     m = Metrics()
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                              patience=int(patience/2), min_lr=0)
+    mod_path = './models/subjects/'+subject
+    timestr = time.strftime("%Y%m%d-%H%M")
 
-    history = model.fit(x_train, y_train, batch_size=16, epochs=epochs, shuffle=True, verbose=0,
-                       validation_data=(x_test, y_test), callbacks=[m, early_stop])
+    checkpointer = ModelCheckpoint(filepath=mod_path+'/best_'+model_name+'_'+timestr,
+                                           monitor='val_loss', verbose=1, save_best_only=True)
+    if early_stopping:
+        history = model.fit(x_train, y_train, batch_size=64, epochs=epochs, shuffle=True, verbose=2,
+                       validation_data=(x_valid, y_valid), callbacks=[m, early_stop, checkpointer, reduce_lr])
+    else:
+        history = model.fit(x_train, y_train, batch_size=64, epochs=epochs, shuffle=True, verbose=2,
+                       validation_data=(x_test, y_test), callbacks=[m])
 
 
     probabilities = model.predict(x_test, batch_size=128, verbose=0)
