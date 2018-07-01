@@ -1,4 +1,3 @@
-_intersubjective
 from src import collect_data_intersubjective, resample_transform, intersubjective_training, save_resutls, intersubjective_shallow, finetune
 import os
 from os.path import isfile, join
@@ -10,17 +9,10 @@ import sys
 import pdb
 #%%
 
-#channels_sorted = np.load('plots/saliency_maps/channels_sorted.npy')
-#significant_channels = channels_sorted[:len(channels_sorted)/2]
-#insignificant_channels = channels_sorted[len(channels_sorted)/2:]
-#significant_channels.sort()
-#insignificant_channels.sort()
 
 subjects = [name for name in os.listdir("./data/50/subjects/")]
-#test_subjects = subjects
 #test_subjects = ['ab82']
 test_subjects = [sys.argv[1]]
-# pdb.set_trace()
 
 batch_size = 64
 lr = 0.001
@@ -34,8 +26,7 @@ ft = False
 ft_mode = 'all'
 ft_trials = [10, 20, 30, 40, 50, 60, 70]
 #
-#model_name = 'deep_branched_intersubjective-111-'+str(dataset)
-#dataset = '50_avg'
+
 
 datasets = ['50_avg', '250']
 
