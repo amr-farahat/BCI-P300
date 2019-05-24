@@ -5,4 +5,5 @@ Brain Computer Interface project in which I use wide and deep convolutional neur
 </p>
 
 #### Related Publications
-[Abstract](http://doi.org/10.12751/nncn.bc2018.0092) and [Poster](http://bit.ly/2PdqhcG) published in Bernstein conference for computational neuroscience in Berlin in Septemper 2018. Preprint paper is coming soon.
+[Abstract](http://doi.org/10.12751/nncn.bc2018.0092) and [Poster](http://bit.ly/2PdqhcG) published in Bernstein conference for computational neuroscience in Berlin in Septemper 2018.
+[Preprint](https://www.biorxiv.org/content/10.1101/614784v1)
