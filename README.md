@@ -11,16 +11,20 @@ Brain Computer Interface project in which I use wide and deep convolutional neur
 
 For Citations.
 
-`@article{
-farahat_reichert_sweeney-reed_hinrichs_2019, 
-title={Convolutional neural networks for decoding of covert attention focus and saliency maps for EEG feature visualization},
-volume={16},
-DOI={10.1088/1741-2552/ab3bb4}, 
-number={6},
-journal={Journal of Neural Engineering},
-author={Farahat, Amr and Reichert, Christoph and Sweeney-Reed, Catherine M and Hinrichs, Hermann},
-year={2019},
-pages={066010}}`
+`@Article{Farahat_2019,
+  Title                    = {Convolutional neural networks for decoding of covert attention focus and saliency maps for {EEG} feature visualization},
+  Author                   = {Amr Farahat and Christoph Reichert and Catherine M Sweeney-Reed and Hermann Hinrichs},
+  Journal                  = {Journal of Neural Engineering},
+  Year                     = {2019},
+  Month                    = {oct},
+  Number                   = {6},
+  Pages                    = {066010},
+  Volume                   = {16},
+  Doi                      = {10.1088/1741-2552/ab3bb4},
+  Publisher                = {{IOP} Publishing},
+  Url                      = {https://doi.org/10.1088%2F1741-2552%2Fab3bb4}
+}
+`
 
 
 [Preprint](https://www.biorxiv.org/content/10.1101/614784v1)
