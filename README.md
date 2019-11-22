@@ -7,5 +7,22 @@ Brain Computer Interface project in which I use wide and deep convolutional neur
 #### Related Publications
 [Abstract](http://doi.org/10.12751/nncn.bc2018.0092) and [Poster](http://bit.ly/2PdqhcG) published in Bernstein conference for computational neuroscience in Berlin in Septemper 2018.
 
-[Preprint](https://www.biorxiv.org/content/10.1101/614784v1) Convolutional Neural Networks for Decoding of Covert Attention Focus and Saliency Maps for EEG Feature Visualization.
+[Paper](https://doi.org/10.1088/1741-2552/ab3bb4) Convolutional Neural Networks for Decoding of Covert Attention Focus and Saliency Maps for EEG Feature Visualization.
+
+For Citations.
+
+`@article{
+farahat_reichert_sweeney-reed_hinrichs_2019, 
+title={Convolutional neural networks for decoding of covert attention focus and saliency maps for EEG feature visualization},
+volume={16},
+DOI={10.1088/1741-2552/ab3bb4}, 
+number={6},
+journal={Journal of Neural Engineering},
+author={Farahat, Amr and Reichert, Christoph and Sweeney-Reed, Catherine M and Hinrichs, Hermann},
+year={2019},
+pages={066010}}`
+
+
+[Preprint](https://www.biorxiv.org/content/10.1101/614784v1)
+
 
